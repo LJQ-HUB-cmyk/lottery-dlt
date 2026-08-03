@@ -1,0 +1,8 @@
+{
+  "chain_digest": "41532f448775adbeb6eb0bc2b27354b0ce5f29d03320c480fdf678100fbe5d72",
+  "count": 8,
+  "created_at": "2026-08-01T11:09:56.906979+00:00",
+  "head": "092bd1f8ea9f110d31204034e0783071b3dfabc6201c1df1ffb1ecbcbb3c8885",
+  "last_issue": "20260804",
+  "lottery": "euromillions"
+}

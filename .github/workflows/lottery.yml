@@ -1,0 +1,79 @@
+name: 开奖结算与预测锁定
+
+# 全部时间为 UTC。各彩种开奖时间不同，多跑几次无副作用——
+# settle 只在有新开奖时才写数据，lock 对已存在的期次会跳过。
+on:
+  schedule:
+    - cron: '5 */3 * * *'    # 每 3 小时：抓开奖 + 结算 + 锁定下期
+    - cron: '0 4 * * *'      # 每天 04:00：链头锚定到比特币
+  workflow_dispatch:          # 也可以手动触发
+    inputs:
+      command:
+        description: '手动执行的命令'
+        required: false
+        default: 'all'
+        type: choice
+        options: [all, settle, lock, anchor, verify]
+
+permissions:
+  contents: write             # 需要把数据 commit 回仓库
+
+concurrency:
+  group: lottery-data         # 防止两次运行同时写数据造成冲突
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 校验哈希链
+        run: python -m src.cron verify
+
+      - name: 抓取开奖并结算
+        if: >-
+          github.event.schedule == '5 */3 * * *'
+          || inputs.command == 'all' || inputs.command == 'settle'
+        run: python -m src.cron settle
+
+      - name: 锁定下期预测
+        if: >-
+          github.event.schedule == '5 */3 * * *'
+          || inputs.command == 'all' || inputs.command == 'lock'
+        run: python -m src.cron lock
+
+      - name: 锚定链头到比特币
+        if: >-
+          github.event.schedule == '0 4 * * *'
+          || inputs.command == 'all' || inputs.command == 'anchor'
+        run: python -m src.cron anchor
+        continue-on-error: true   # 时间戳服务不可用不应让整个流程失败
+
+      - name: 提交数据变更
+        run: |
+          git config user.name  "lottery-bot"
+          git config user.email "actions@github.com"
+          git add data/
+          if git diff --staged --quiet; then
+            echo "无数据变更"
+            exit 0
+          fi
+          git commit -m "数据更新 $(date -u '+%F %H:%M UTC')"
+          # 并发或落后时先 rebase 再推
+          git pull --rebase --autostash origin ${{ github.ref_name }} || true
+          git push
+
+      - name: 输出当前战绩
+        if: always()
+        run: python -m src.cron verify

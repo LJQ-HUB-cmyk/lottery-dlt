@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>大乐透分析工具</title>
+<script src="/static/chart.umd.js"></script>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--line:#252a34;--text:#e6e8ec;--dim:#8b93a3;
+--red:#e8453c;--blue:#3b82f6;--gold:#f0b429;--green:#22c55e}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFang SC",sans-serif;padding:20px}
+.wrap{max-width:1100px;margin:0 auto}
+h1{font-size:22px;margin-bottom:4px}
+.sub{color:var(--dim);font-size:13px;margin-bottom:20px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:20px;flex-wrap:wrap}
+.tab{padding:10px 18px;cursor:pointer;color:var(--dim);border-bottom:2px solid transparent;white-space:nowrap}
+.tab.on{color:var(--text);border-bottom-color:var(--red)}
+.panel{display:none}.panel.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+.card h3{font-size:15px;margin-bottom:14px;font-weight:600}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+select,input,button{background:#20242d;color:var(--text);border:1px solid var(--line);
+border-radius:6px;padding:8px 12px;font-size:14px;font-family:inherit}
+button{background:var(--red);border-color:var(--red);cursor:pointer;font-weight:600}
+button:hover{opacity:.88}
+button.ghost{background:#20242d;border-color:var(--line);font-weight:400}
+label{color:var(--dim);font-size:13px}
+.ball{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;
+border-radius:50%;background:var(--red);color:#fff;font-weight:600;font-size:14px;margin-right:6px}
+.ball.b{background:var(--blue)}
+.ball.sm{width:26px;height:26px;font-size:12px;margin-right:4px}
+.set{display:flex;align-items:center;gap:4px;padding:10px 0;border-bottom:1px solid var(--line)}
+.set:last-child{border:0}
+.set .n{color:var(--dim);width:34px;font-size:13px}
+.sep{color:var(--dim);margin:0 8px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-weight:500}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px}
+.kv div{background:#20242d;padding:12px;border-radius:8px}
+.kv .k{color:var(--dim);font-size:12px}
+.kv .v{font-size:19px;font-weight:600;margin-top:3px}
+.warn{background:#2a1f1a;border:1px solid #4a3428;color:#d9a066;padding:12px 14px;
+border-radius:8px;font-size:13px;margin-bottom:16px;line-height:1.7}
+.neg{color:var(--red)}.pos{color:var(--green)}
+canvas{max-height:280px}
+.hint{color:var(--dim);font-size:12px;margin-top:10px}
+.load{color:var(--dim);padding:20px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+    彩票预测公开验证
+    <select id="lot" onchange="switchLottery()" style="font-size:15px;padding:6px 10px">
+      {% for l in lotteries %}<option value="{{ l.key }}"{% if l.key==current %} selected{% endif %}>{{ l.name }}（{{ l.country }}）</option>{% endfor %}
+    </select>
+  </h1>
+  <div class="sub">
+    {% if overview %}
+    {{ overview.lottery_name }} {{ overview.rule }} · 数据 {{ overview.total_periods }} 期（{{ overview.first_date }} ~ {{ overview.latest_date }}）
+    · 最新 {{ overview.latest_issue }} 期：
+    {% for n in overview.latest_front %}<b>{{ '%02d'|format(n) }}</b> {% endfor %}
+    {% if overview.latest_back %}+ {% for n in overview.latest_back %}<b>{{ '%02d'|format(n) }}</b> {% endfor %}{% endif %}
+    <br>头奖概率 1/{{ '{:,}'.format(overview.jackpot_odds) }} · 单注期望 {{ overview.expected_value }} {{ overview.currency }} · ROI <span class="neg">{{ '%.1f'|format(overview.roi*100) }}%</span>
+    {% else %}该彩种数据尚未抓取{% endif %}
+  </div>
+
+  <div class="tabs">
+    <div class="tab on" data-p="predict">选号</div>
+    <div class="tab" data-p="trend">走势图</div>
+    <div class="tab" data-p="history">历史开奖</div>
+    <div class="tab" data-p="wheel">复式 Wheel</div>
+    <div class="tab" data-p="track">公开验证</div>
+  </div>
+
+  <!-- 选号 -->
+  <div class="panel on" id="predict">
+    <div class="card">
+      <div class="row">
+        <label>算法</label>
+        <select id="algo">
+          {% for a in algorithms %}<option value="{{ a.key }}"{% if a.key=='mix' %} selected{% endif %}>{{ a.name }}</option>{% endfor %}
+        </select>
+        <label>注数</label>
+        <input id="nsets" type="number" value="5" min="1" max="20" style="width:70px">
+        <button onclick="doPredict()">生成号码</button>
+      </div>
+      <div id="pred-out" class="load">点击生成</div>
+    </div>
+    <div class="card">
+      <h3>出号推导过程 <span style="color:var(--dim);font-weight:400;font-size:13px">
+        —— 每个号码为什么得这个分</span></h3>
+      <div class="row">
+        <label>区域</label>
+        <select id="ez" onchange="loadExplain()">
+          <option value="front">前区</option><option value="back">后区</option>
+        </select>
+        <label><input type="checkbox" id="eall" onchange="renderExplain()"> 显示全部号码</label>
+      </div>
+      <div id="explain-out" class="load">加载中…</div>
+    </div>
+    <div class="card">
+      <h3>号码评分分布</h3>
+      <canvas id="c-score"></canvas>
+      <div class="hint">柱高代表该算法给每个号码打的分，分数最高的 5 个（后区 2 个）被选出</div>
+    </div>
+  </div>
+
+  <!-- 走势 -->
+  <div class="panel" id="trend">
+    <div class="card">
+      <div class="row">
+        <label>统计范围</label>
+        <select id="win" onchange="loadTrend()">
+          <option value="50">近 50 期</option>
+          <option value="100" selected>近 100 期</option>
+          <option value="300">近 300 期</option>
+          <option value="0">全部历史</option>
+        </select>
+      </div>
+    </div>
+    <div class="card"><h3>前区号码出现次数</h3><canvas id="c-freq"></canvas></div>
+    <div class="card"><h3>前区遗漏值（距上次出现的期数）</h3><canvas id="c-miss"></canvas></div>
+    <div class="card"><h3>和值走势</h3><canvas id="c-sum"></canvas></div>
+    <div class="card">
+      <h3>形态分布</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px">
+        <canvas id="c-odd"></canvas><canvas id="c-zone"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- 历史 -->
+  <div class="panel" id="history">
+    <div class="card">
+      <div class="row">
+        <label>显示</label>
+        <select id="hn" onchange="loadHistory()">
+          <option value="30">近 30 期</option><option value="50">近 50 期</option>
+          <option value="100">近 100 期</option>
+        </select>
+      </div>
+      <div id="hist-out" class="load">加载中…</div>
+    </div>
+  </div>
+
+  <!-- wheel -->
+  <div class="panel" id="wheel">
+    <div class="card">
+      <h3>复式投注组合优化</h3>
+      <div class="row">
+        <label>前区池</label><input id="w-pool" type="number" value="9" min="5" max="14" style="width:70px">
+        <label>保证中</label><input id="w-g" type="number" value="3" min="1" max="5" style="width:70px">
+        <label>后区池</label><input id="w-back" type="number" value="3" min="2" max="12" style="width:70px">
+        <button onclick="doWheel()">计算</button>
+      </div>
+      <div id="wheel-out" class="load">设定参数后点击计算</div>
+    </div>
+  </div>
+
+  <!-- 公开验证 -->
+  <div class="panel" id="track">
+    <div class="card">
+      <h3>预测公开验证 <span style="color:var(--dim);font-weight:400;font-size:13px">
+        —— 开奖前锁定，开奖后自动比对，输赢全部保留</span></h3>
+      <div id="track-chain"></div>
+      <div class="hint" style="margin-top:12px">
+        每条预测在开奖前写入 append-only 日志，并含前一条记录的 SHA-256。
+        任何事后修改都会使哈希链断裂，任何人都可以自行校验。
+        <b>random（随机基线）与其他算法同场竞技</b>——没有基线，"算法有效"就无从谈起。
+      </div>
+    </div>
+    <div class="card">
+      <h3>待开奖（已锁定）</h3>
+      <div id="track-pending" class="load">加载中…</div>
+    </div>
+    <div class="card">
+      <h3>各算法累计战绩</h3>
+      <div id="track-summary" class="load">加载中…</div>
+    </div>
+    <div class="card">
+      <h3>逐期记录</h3>
+      <div id="track-recent" class="load">加载中…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s), charts={};
+const LOT=()=>$('#lot').value;
+const api=(path)=>fetch(path+(path.includes('?')?'&':'?')+'lottery='+LOT()).then(r=>r.json());
+function switchLottery(){ location.search='?lottery='+LOT(); }
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+  document.querySelectorAll('.panel').forEach(x=>x.classList.remove('on'));
+  t.classList.add('on'); $('#'+t.dataset.p).classList.add('on');
+  if(t.dataset.p==='trend') loadTrend();
+  if(t.dataset.p==='history') loadHistory();
+  if(t.dataset.p==='track') loadTrack();
+});
+
+async function loadTrack(){
+  const d=await api('/api/track');
+
+  const a=d.anchor||{};
+  const anchorHtml = a.total ? `<div class="hint" style="margin-top:10px">
+      ⛓ 已锚定到比特币区块链 ${a.total} 次　当前链头${a.head_anchored?'已锚定':'待锚定'}
+      ${a.unanchored>0?`　${a.unanchored} 条记录尚未锚定`:''}
+      <br>链头 <code style="color:#8b93a3">${(a.current_head||'').slice(0,32)}…</code>
+      <br>任何人可用 <code>ots verify</code> 独立校验时间戳，无需信任本站。
+    </div>` : '';
+  $('#track-chain').innerHTML = d.chain_valid
+    ? `<div style="background:#152a1c;border:1px solid #1f4a2e;color:#4ade80;padding:12px 14px;border-radius:8px">
+        ✓ 哈希链完整　共 ${d.total_predictions} 条预测，其中 ${d.settled} 条已开奖结算</div>`+anchorHtml
+    : `<div class="warn">✗ 哈希链在第 ${d.chain_broken_at} 条断裂——记录被修改过，数据不可信</div>`;
+
+  $('#track-pending').innerHTML = d.pending.length
+    ? d.pending.map(p=>`<div class="set"><span class="n" style="width:auto;margin-right:10px">${p.issue}</span>
+        <span style="color:var(--dim);width:90px;font-size:13px">${p.algo_name||p.algo}</span>
+        ${balls(p.front,p.back)}</div>`).join('')
+      +`<div class="hint">这些预测已写入哈希链，开奖后自动比对，无法修改</div>`
+    : '<div class="hint">当前没有待开奖的预测</div>';
+
+  if(!d.summary.length){
+    $('#track-summary').innerHTML='<div class="hint">还没有已结算的记录。等下一期开奖后这里会出现战绩。</div>';
+    $('#track-recent').innerHTML='<div class="hint">暂无</div>';
+    return;
+  }
+
+  const base=d.summary.find(s=>s.algo==='random');
+  $('#track-summary').innerHTML=`<div style="overflow-x:auto"><table>
+    <tr><th>算法</th><th>期数</th><th>平均命中</th><th>投入</th><th>回报</th><th>净收益</th>
+    <th>ROI</th><th>vs 随机 p 值</th><th>结论</th></tr>
+    ${d.summary.map(s=>`<tr${s.algo==='random'?' style="background:#1a1f2a"':''}>
+      <td>${s.name}${s.algo==='random'?' <span style="color:var(--dim)">(基线)</span>':''}</td>
+      <td>${s.n}</td><td><b>${s.mean_hits}</b></td>
+      <td>${s.cost}</td><td>${s.payout}</td>
+      <td class="${s.net>=0?'pos':'neg'}">${s.net}</td>
+      <td class="${s.roi>=0?'pos':'neg'}">${(s.roi*100).toFixed(1)}%</td>
+      <td>${s.vs_random_p===null?'—':s.vs_random_p}</td>
+      <td>${s.algo==='random'?'—':(s.beats_random
+        ?'<span class="pos">显著优于随机</span>'
+        :'<span style="color:var(--dim)">未显著优于随机</span>')}</td>
+    </tr>`).join('')}
+  </table></div>
+  <div class="hint">平均命中 = 每注平均命中的号码个数（前区+后区）。
+  Welch t 检验对比各算法与随机基线的命中数均值，p&lt;0.05 才算显著。
+  ${base?`随机基线平均命中 ${base.mean_hits}。`:''}
+  <b>样本量小的时候不要过度解读——短期波动很大，需要足够期数才能分辨真实差异。</b></div>`;
+
+  $('#track-recent').innerHTML=`<div style="overflow-x:auto"><table>
+    <tr><th>期号</th><th>算法</th><th>预测</th><th>实际开奖</th><th>命中</th><th>奖金</th></tr>
+    ${d.recent.map(r=>`<tr>
+      <td>${r.issue}</td><td>${r.algo_name||r.algo}</td>
+      <td>${r.front.map(n=>`<span class="ball sm">${String(n).padStart(2,'0')}</span>`).join('')}
+          ${r.back.map(n=>`<span class="ball b sm">${String(n).padStart(2,'0')}</span>`).join('')}</td>
+      <td>${r.actual_front.map(n=>`<span class="ball sm" style="background:#3a3f4a">${String(n).padStart(2,'0')}</span>`).join('')}
+          ${r.actual_back.map(n=>`<span class="ball sm" style="background:#2a3f5a">${String(n).padStart(2,'0')}</span>`).join('')}</td>
+      <td>${r.hit_front}+${r.hit_back}</td>
+      <td class="${r.payout?'pos':''}">${r.payout||'—'}</td>
+    </tr>`).join('')}
+  </table></div>`;
+}
+
+const CO={responsive:true,plugins:{legend:{display:false}},
+  scales:{x:{ticks:{color:'#8b93a3',font:{size:10}},grid:{color:'#252a34'}},
+          y:{ticks:{color:'#8b93a3',font:{size:10}},grid:{color:'#252a34'}}}};
+function draw(id,type,labels,data,color){
+  if(charts[id]) charts[id].destroy();
+  charts[id]=new Chart($('#'+id),{type,data:{labels,datasets:[{data,
+    backgroundColor:color,borderColor:color,borderWidth:type==='line'?2:0,
+    pointRadius:type==='line'?0:3,tension:.3,fill:false}]},options:CO});
+}
+const balls=(f,b)=>f.map(n=>`<span class="ball">${String(n).padStart(2,'0')}</span>`).join('')
+  +'<span class="sep">+</span>'+b.map(n=>`<span class="ball b">${String(n).padStart(2,'0')}</span>`).join('');
+
+async function doPredict(){
+  $('#pred-out').innerHTML='<div class="load">计算中…</div>';
+  const r=await api(`/api/predict?algo=${$('#algo').value}&sets=${$('#nsets').value}`);
+  $('#pred-out').innerHTML=r.sets.map((s,i)=>
+    `<div class="set"><span class="n">${i+1}</span>${balls(s.front,s.back)}</div>`).join('')
+    +`<div class="hint">算法：${r.name}　第 1 注为评分最高组合，其余按评分加权随机生成</div>`;
+  draw('c-score','bar',r.front_scores.map((_,i)=>i+1),r.front_scores,'#e8453c');
+  loadExplain();
+}
+
+let explainData=null;
+const ALGO_LABEL={hot:'热号',cold:'冷号',overdue:'遗漏值',cycle:'回归周期',
+  markov:'马尔可夫',sum:'和值',ml:'机器学习',random:'随机'};
+
+async function loadExplain(){
+  $('#explain-out').innerHTML='<div class="load">计算中…</div>';
+  explainData=await api(`/api/explain?algo=${$('#algo').value}&zone=${$('#ez').value}`);
+  renderExplain();
+}
+
+function renderExplain(){
+  const d=explainData; if(!d||d.error){$('#explain-out').innerHTML=
+    `<div class="warn">${d?.error||'加载失败'}</div>`;return;}
+  const keys=Object.keys(d.weights);
+  const all=$('#eall').checked;
+  const rows=[...d.rows].sort((a,b)=>a.rank-b.rank).filter(r=>all||r.rank<=10);
+
+  const wtxt=keys.map(k=>`${ALGO_LABEL[k]||k}×${d.weights[k]}`).join(' + ');
+  $('#explain-out').innerHTML=`
+    <div class="hint" style="margin-bottom:12px">
+      综合分 = ${wtxt}（各算法分数先归一化到 0~1，再按权重相加）·
+      该区号码历史平均出现 ${d.expected_freq} 次
+    </div>
+    <div style="overflow-x:auto"><table>
+      <tr><th>号</th><th>排名</th><th>综合分</th><th>遗漏</th><th>平均间隔</th>
+      <th>遗漏/间隔</th><th>近30期</th><th>历史总计</th>
+      ${keys.map(k=>`<th>${ALGO_LABEL[k]||k}</th>`).join('')}</tr>
+      ${rows.map(r=>`<tr${r.selected?' style="background:#241a1a"':''}>
+        <td><span class="ball sm"${r.selected?'':' style="background:#3a3f4a"'}>${String(r.number).padStart(2,'0')}</span></td>
+        <td>${r.rank}${r.selected?' ★':''}</td>
+        <td><b>${r.score}</b></td>
+        <td>${r.gap}</td><td>${r.mean_gap}</td>
+        <td${r.gap_ratio>1.5?' style="color:#f0b429"':''}>${r.gap_ratio}</td>
+        <td>${r.freq_30}</td><td>${r.freq_all}</td>
+        ${keys.map(k=>`<td>${r.contributions[k]}</td>`).join('')}
+      </tr>`).join('')}
+    </table></div>
+    <div class="hint">★ = 本次入选。最后 ${keys.length} 列是各算法的加权贡献，
+    相加即为综合分。<b>遗漏</b>=距上次出现多少期，<b>平均间隔</b>=该号历史上平均隔多少期出一次。</div>`;
+}
+
+async function loadTrend(){
+  const w=$('#win').value, q=w==='0'?'':'&window='+w;
+  const f=await api('/api/stats/frequency?zone=front'+q);
+  draw('c-freq','bar',f.map(x=>x.number),f.map(x=>x.count),'#e8453c');
+  const m=await api('/api/stats/missing?zone=front');
+  draw('c-miss','bar',m.map(x=>x.number),m.map(x=>x.gap),'#f0b429');
+  const s=await api('/api/stats/sum?window='+(w==='0'?300:w));
+  draw('c-sum','line',s.map(x=>x.issue),s.map(x=>x.sum),'#3b82f6');
+  const r=await api('/api/stats/ratio'+(w==='0'?'':'?window='+w));
+  draw('c-odd','bar',r.odd.map(x=>x.label),r.odd.map(x=>x.count),'#22c55e');
+  const z=await api('/api/stats/zone'+(w==='0'?'':'?window='+w));
+  draw('c-zone','bar',z.map(x=>x.label),z.map(x=>x.count),'#8b5cf6');
+}
+
+async function loadHistory(){
+  const d=await api('/api/stats/recent?window='+$('#hn').value);
+  $('#hist-out').innerHTML='<table><tr><th>期号</th><th>日期</th><th>开奖号码</th><th>和值</th></tr>'
+    +d.map(x=>`<tr><td>${x.issue}</td><td>${x.date}</td><td>`
+    +x.front.map(n=>`<span class="ball sm">${String(n).padStart(2,'0')}</span>`).join('')
+    +x.back.map(n=>`<span class="ball b sm">${String(n).padStart(2,'0')}</span>`).join('')
+    +`</td><td>${x.sum}</td></tr>`).join('')+'</table>';
+}
+
+async function doWheel(){
+  $('#wheel-out').innerHTML='<div class="load">求解中，号码池越大越慢…</div>';
+  const r=await api(`/api/wheel?pool=${$('#w-pool').value}&guarantee=${$('#w-g').value}&back=${$('#w-back').value}`);
+  if(r.error){$('#wheel-out').innerHTML=`<div class="warn">${r.error}</div>`;return;}
+  $('#wheel-out').innerHTML=`
+    <div class="kv">
+      <div><div class="k">总注数</div><div class="v">${r.total_tickets.toLocaleString()}</div></div>
+      <div><div class="k">成本</div><div class="v">${r.cost.toLocaleString()} 元</div></div>
+      <div><div class="k">前区组合</div><div class="v">${r.front_count} 组</div></div>
+      <div><div class="k">理论下界</div><div class="v">${r.lower_bound}</div></div>
+      <div><div class="k">保证触发概率</div><div class="v">${(r.trigger_prob*100).toFixed(3)}%</div></div>
+      <div><div class="k">期望回报</div><div class="v">${r.expected} 元</div></div>
+      <div><div class="k">ROI</div><div class="v neg">${(r.roi*100).toFixed(1)}%</div></div>
+      <div><div class="k">平均触发间隔</div><div class="v">${r.trigger_every} 期</div></div>
+    </div>
+    <div class="hint" style="margin:14px 0">
+      保证：开奖 5 个前区号有 ${r.guarantee} 个落在你圈的 ${r.pool} 个号里、
+      且 2 个后区号都在你圈的 ${r.back_pool} 个里时，必中至少${r.level}（约 ${r.level_amount.toLocaleString()} 元）
+    </div>
+    <table><tr><th>#</th><th>前区组合（号码池内的第几个号）</th></tr>
+    ${r.front_blocks.map((b,i)=>`<tr><td>${i+1}</td><td>`
+      +b.map(n=>`<span class="ball sm">${n}</span>`).join('')+'</td></tr>').join('')}</table>
+    <div class="hint">上表是号码池内的序号。把你选的 ${r.pool} 个号按从小到大排好，
+    第 1 个号对应序号 1，以此类推。每个前区组合要搭配全部 ${r.back_combos} 种后区组合。</div>`;
+}
+doPredict();
+</script>
+</body>
+</html>

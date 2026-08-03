@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dlt-web",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "src.web"],
+      "port": 5001,
+      "autoPort": true
+    }
+  ]
+}

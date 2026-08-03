@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.tmp
+.DS_Store
+
+# 缓存是可重算的派生物，不进仓库
+data/cache/
+
+# 作废的 v1 哈希链，本地留档即可
+data/archive/

@@ -1,0 +1,47 @@
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${BIND:-127.0.0.1}:8000:8000"
+    environment:
+      PORT: 8000
+      WEB_CONCURRENCY: 3
+      CACHE_TTL: 604800
+      TZ: UTC
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=8)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # 定时任务：抓开奖、结算、锁定下期、上链
+  cron:
+    build: .
+    restart: unless-stopped
+    environment:
+      TZ: UTC
+    volumes:
+      - ./data:/app/data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "定时任务已启动"
+        while true; do
+          H=$$(date -u +%H); M=$$(date -u +%M)
+          # 每 3 小时结算一次（覆盖各时区开奖时间）
+          if [ "$$M" = "05" ] && [ $$((10#$$H % 3)) -eq 0 ]; then
+            python -m src.cron settle || true
+          fi
+          # 每 6 小时锁定下期预测
+          if [ "$$M" = "35" ] && [ $$((10#$$H % 6)) -eq 0 ]; then
+            python -m src.cron lock || true
+          fi
+          # 每天 04:00 UTC 上链
+          if [ "$$H" = "04" ] && [ "$$M" = "00" ]; then
+            python -m src.cron anchor || true
+          fi
+          sleep 55
+        done

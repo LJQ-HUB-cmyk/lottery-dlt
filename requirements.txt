@@ -1,0 +1,9 @@
+flask>=3.0
+gunicorn>=21.2
+requests>=2.31
+lxml>=5.0
+pandas>=2.0
+numpy>=1.26
+scipy>=1.11
+scikit-learn>=1.4
+opentimestamps-client>=0.7
