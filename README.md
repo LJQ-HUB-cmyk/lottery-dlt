@@ -178,12 +178,21 @@ Kakeya 的舞台，也是覆盖设计的经典构造来源。本项目 `wheel.cy
 src/
   fetch.py    数据抓取(500.com，GB18030，锚定式解析抗列数漂移)
   markov.py   状态定义 + G² 检验 + BH 多重比较校正
+  track.py    预测哈希链 + 超几何精确零分布 + Holm 多重比较校正
+  null.py     空对照：同一模型喂真实开奖与合成随机数据，比较学到了什么
   wheel.py    Schönheim 下界 / 贪心 / 循环群构造 / 模拟退火 / ILP 精确求解 / 暴力验证
   prize.py    奖级判定与奖金表
   cli.py      命令行入口
 tests/
   test_calibration.py     检验工具的第一类错误率与统计功效
   test_wheel_guarantee.py 开奖语义下的保证兑现验证
+  test_statistics.py      零分布精确性、p 值校准、多重比较受控、堆叠特征等价
+```
+
+三个测试都是独立脚本，直接跑，退出码 0 为通过：
+
+```bash
+.venv/bin/python tests/test_statistics.py
 ```
 
 ## 设计要点
