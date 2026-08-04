@@ -25,7 +25,8 @@ DATA_DIR = BASE / "data"
 GENESIS = "0" * 64
 
 # 参与公开验证的算法。random 是基线，必须在场——没有基线就无从判断"有效"。
-TRACKED = ["mix", "ml", "markov", "overdue", "hot", "cold", "cycle", "random"]
+TRACKED = ["mix", "stack", "ml", "markov", "overdue", "hot", "cold", "cycle",
+           "random"]
 
 
 def pred_path(lot):

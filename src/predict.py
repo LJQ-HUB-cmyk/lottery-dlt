@@ -120,6 +120,114 @@ def score_ml(df, lot, zone, **kw):
     return p[:, 1] if p.shape[1] == 2 else np.full(n_nums, p[0, 0])
 
 
+def _walk_features(m, n_pick):
+    """按时间前进，逐期产出「用 m[:t] 能算出的全部特征」。
+
+    天真做法是在每个时点调用一遍各算法，但 score_markov 每次都要重建
+    n×n 转移矩阵，总复杂度 O(T²·k²)，2905 期根本跑不完。这里把所有统计量
+    改成增量维护，每步降到 O(n)。
+
+    产出的列与 STACK_FEATURES 一一对应。
+    """
+    T, n = m.shape
+    nums = np.arange(1, n + 1, dtype=float)
+
+    # 前缀和：任意窗口的出现次数都能 O(1) 取到
+    cum = np.vstack([np.zeros((1, n), dtype=np.int32),
+                     np.cumsum(m, axis=0, dtype=np.int32)])
+
+    last_seen = np.full(n, -1)
+    first_seen = np.full(n, -1)
+    n_hits = np.zeros(n)
+    trans = np.zeros((n, n))
+    row = np.zeros(n)
+    sum_total = 0.0
+
+    for t in range(T):
+        gap = np.where(last_seen >= 0, t - 1 - last_seen, t).astype(float)
+
+        # 平均间隔 = (末次 - 首次) / (出现次数 - 1)，与 score_due_cycle 同义
+        span = (last_seen - first_seen).astype(float)
+        mean_gap = np.where(n_hits > 1, span / np.maximum(n_hits - 1, 1),
+                            float(max(t, 1)))
+        cycle = gap / np.maximum(mean_gap, 1e-9)
+
+        # 马尔可夫：只取上期开出号码那几行，O(k·n)
+        mk = np.zeros(n)
+        if t >= 1:
+            for j in np.flatnonzero(m[t - 1]):
+                if row[j] > 0:
+                    mk += trans[j] / row[j]
+
+        target = (sum_total / t / n_pick) if t else 0.0
+
+        yield np.column_stack([
+            gap,
+            (cum[t] - cum[max(0, t - 10)]).astype(float),
+            (cum[t] - cum[max(0, t - 30)]).astype(float),
+            (cum[t] - cum[max(0, t - 100)]).astype(float),
+            cycle,
+            mk,
+            -np.abs(nums - target),
+            nums,
+        ])
+
+        # 用 m[t] 更新状态——必须在 yield 之后，否则特征里混入当期答案
+        idx = np.flatnonzero(m[t])
+        if t >= 1:
+            prev = np.flatnonzero(m[t - 1])
+            trans[np.ix_(prev, idx)] += 1
+            row[prev] += len(idx)
+        new = idx[first_seen[idx] < 0]
+        first_seen[new] = t
+        last_seen[idx] = t
+        n_hits[idx] += 1
+        sum_total += nums[idx].sum()
+
+
+STACK_FEATURES = ["遗漏值", "近10期", "近30期", "近100期",
+                  "回归周期", "马尔可夫", "和值偏离", "号码"]
+
+
+def score_stack(df, lot, zone, **kw):
+    """堆叠模型：把其它算法的评分当特征，让随机森林自己学怎么组合。
+
+    混合模型的权重（MIX_WEIGHTS）是手工拍的，没有依据。这里换成让模型
+    从历史里学——这是"你们模型太简陋"这个反驳的正面回应。
+
+    注意冷号没有进特征：score_cold = max - score_hot，是热号的单调递减
+    变换，而决策树对单调变换不变，加进去提供的信息严格为零。
+    """
+    from sklearn.ensemble import RandomForestClassifier
+
+    m = to_matrix(df, lot, zone)
+    T, n = m.shape
+    _, _, n_pick = zone_spec(lot, zone)
+    min_hist = min(200, T // 2)
+
+    # 多走一步（补一行空数据）就能在同一次遍历里拿到"下期"的特征：
+    # t=T 时用的历史正好是完整的 m，那一行空数据只参与它之后的状态更新
+    m_ext = np.vstack([m, np.zeros((1, n), dtype=m.dtype)])
+
+    X, y, last = [], [], None
+    for t, feat in enumerate(_walk_features(m_ext, n_pick)):
+        if min_hist <= t < T:
+            X.append(feat)
+            y.append(m[t])
+        last = feat
+    if not X:
+        return np.full(n, 0.5)
+
+    clf = RandomForestClassifier(
+        n_estimators=150, max_depth=8, min_samples_leaf=40,
+        n_jobs=-1, random_state=0,
+    )
+    clf.fit(np.vstack(X), np.concatenate(y))
+
+    p = clf.predict_proba(last)
+    return p[:, 1] if p.shape[1] == 2 else np.full(n, p[0, 0])
+
+
 def score_random(df, lot, zone, seed=None, **kw):
     """纯随机：对照基线。"""
     _, n_max, _ = zone_spec(lot, zone)
@@ -134,6 +242,7 @@ ALGORITHMS = {
     "markov": ("马尔可夫转移", score_markov),
     "sum": ("和值回归", score_sum_target),
     "ml": ("机器学习", score_ml),
+    "stack": ("堆叠模型", score_stack),
     "random": ("随机", score_random),
     "mix": ("混合模型", None),
 }
