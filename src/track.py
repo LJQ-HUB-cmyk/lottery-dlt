@@ -93,13 +93,36 @@ def next_issue(df, lot=None):
         return f"{last}+1"
 
 
+class DrawAlreadyHeld(Exception):
+    """下一期已经开奖，但结果还没抓到——此刻绝不能写预测。"""
+
+
 def make_predictions(df, lot=None, algos=None, now=None):
-    """为下一期生成预测并追加写入。同一期同一算法不重复写。"""
+    """为下一期生成预测并追加写入。同一期同一算法不重复写。
+
+    开奖时刻已过就拒绝写入，见下方 DrawAlreadyHeld。
+    """
     lot = lot or get_lottery()
     algos = algos or TRACKED
     issue = next_issue(df, lot)
     based_on = str(df.iloc[-1]["issue"])
     now = now or datetime.now(timezone.utc).astimezone()
+
+    # 预测必须写在开奖之前，否则这条记录作为证据是零价值的：外部验证者
+    # 只看得到"时间戳晚于开奖"，无从区分诚实的抓取延迟和看着结果补写。
+    # 而链上记录不可撤销，一条脏记录会永久留在公开仓库里。
+    # 所以宁可漏掉一期，也不写一条无法自证清白的记录。
+    last_date = df.iloc[-1].get("date")
+    if last_date is not None and lot.draw_days:
+        draw_at = lot.draw_at(lot.next_draw_date(str(last_date)[:10]))
+        if now >= draw_at:
+            raise DrawAlreadyHeld(
+                f"{issue} 期已于 {draw_at:%F %H:%M %Z} 开奖，"
+                f"现在是 {now:%F %H:%M %Z}，晚了 "
+                f"{(now - draw_at).total_seconds() / 60:.0f} 分钟。"
+                f"拒绝写入——开奖后生成的预测无法自证清白。"
+                f"等结果发布后 settle 会补上，下一期照常锁定。"
+            )
 
     records = load_records(lot)
     existing = {(r["issue"], r["algo"]) for r in records}

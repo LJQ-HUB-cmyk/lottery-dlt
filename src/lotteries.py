@@ -8,6 +8,17 @@
 """
 
 from dataclasses import dataclass, field
+from datetime import date as _date
+from datetime import datetime as _datetime
+from datetime import timedelta
+from zoneinfo import ZoneInfo
+
+
+def _as_date(d):
+    if isinstance(d, str):
+        y, m, dd = map(int, d[:10].split("-"))
+        return _date(y, m, dd)
+    return d
 
 
 @dataclass
@@ -28,6 +39,9 @@ class Lottery:
     source: str
     enabled: bool = True
     notes: str = ""
+    # draw_time 所属时区。必须显式写明：判断"预测是否早于开奖"要比较绝对
+    # 时刻，用本机时区去解释 22:59 ET 会差出十几个小时。
+    draw_tz: str = "Asia/Shanghai"
     # 当前规则的生效日期；早于此日期的历史数据规则不同，必须丢弃
     rules_from: str = "1900-01-01"
     # 号码分区边界，用于走势图的区间统计
@@ -50,6 +64,27 @@ class Lottery:
             if n <= edge:
                 return i
         return len(self.zones)
+
+    def draw_at(self, d):
+        """某个开奖日的绝对开奖时刻（带时区）。d 可以是 date 或 'YYYY-MM-DD'。
+
+        用 ZoneInfo 而不是固定偏移，夏令时会自动跟随——Powerball 的
+        ET 和 EuroMillions 的 CET 一年里都要切换两次。
+        """
+        d = _as_date(d)
+        hh, mm = map(int, self.draw_time.split()[0].split(":"))
+        return _datetime(d.year, d.month, d.day, hh, mm,
+                         tzinfo=ZoneInfo(self.draw_tz))
+
+    def next_draw_date(self, after):
+        """给定上一期开奖日，按开奖日程推算下一个开奖日。"""
+        after = _as_date(after)
+        days = self.draw_days or list(range(7))
+        for i in range(1, 15):
+            nd = after + timedelta(days=i)
+            if nd.weekday() in days:
+                return nd
+        return after + timedelta(days=1)
 
 
 DLT = Lottery(
@@ -93,7 +128,10 @@ POWERBALL = Lottery(
     },
     level_names={1: "Jackpot", 2: "Match 5", 3: "Match 4+PB", 4: "Match 4",
                  5: "Match 3", 6: "Match 1+PB"},
-    draw_days=[0, 2, 5], draw_time="22:59 ET",
+    draw_days=[0, 2, 5], draw_time="22:59 ET", draw_tz="America/New_York",
+    # 暂停：开奖窗口落在本机时间上午 10:59，Mac 睡眠时容易漏掉锁定。
+    # 已有的链和数据都保留，改回 True 即可继续，settle 会自动补齐。
+    enabled=False,
     source="data.ny.gov（纽约州官方开放数据）", zones=[23, 46],
     rules_from="2015-10-07",
     notes="2015-10-07 起改为 5/69+1/26（此前为 5/59+1/35），早期数据已剔除；头奖为浮动累积奖",
@@ -109,7 +147,9 @@ EUROMILLIONS = Lottery(
         (3, 0): (10, 12), (1, 2): (11, 10), (2, 1): (12, 8), (2, 0): (13, 4),
     },
     level_names={i: f"Tier {i}" for i in range(1, 14)},
-    draw_days=[1, 4], draw_time="20:45 CET",
+    draw_days=[1, 4], draw_time="20:45 CET", draw_tz="Europe/Paris",
+    # 暂停：开奖窗口落在本机时间凌晨 02:45，Mac 必然在睡眠。同上，可随时改回。
+    enabled=False,
     source="euro-millions.com", zones=[17, 34],
     rules_from="2016-09-24",
     notes="2016-09-24 起幸运星增至 1..12（此前为 1..11 / 1..9），早期数据已剔除；全部为浮动奖",
