@@ -69,8 +69,10 @@ def cmd_settle():
               f"已结算 {st['settled']:>4}  待开奖 {len(st['pending']):>2}")
         for s in st["summary"][:3]:
             beat = "  ← 显著优于随机" if s["beats_random"] else ""
-            print(f"      {s['name']:<10} n={s['n']:<4} 平均命中={s['mean_hits']:<7} "
-                  f"ROI={s['roi']:>7.1%}{beat}")
+            pa = "—" if s["p_adjusted"] is None else f"{s['p_adjusted']:.3f}"
+            print(f"      {s['name']:<10} n={s['n']:<4} "
+                  f"平均命中={s['mean_hits']:<6} 期望={s['expected_hits']:<6} "
+                  f"校正p={pa:<6} ROI={s['roi']:>7.1%}{beat}")
 
     _each(report)
     return rc

@@ -229,25 +229,30 @@ async function loadTrack(){
     return;
   }
 
-  const base=d.summary.find(s=>s.algo==='random');
   $('#track-summary').innerHTML=`<div style="overflow-x:auto"><table>
-    <tr><th>算法</th><th>期数</th><th>平均命中</th><th>投入</th><th>回报</th><th>净收益</th>
-    <th>ROI</th><th>vs 随机 p 值</th><th>结论</th></tr>
+    <tr><th>算法</th><th>期数</th><th>平均命中</th><th>随机期望</th><th>投入</th><th>回报</th><th>净收益</th>
+    <th>ROI</th><th>p 值</th><th>校正后 p</th><th>结论</th></tr>
     ${d.summary.map(s=>`<tr${s.algo==='random'?' style="background:#1a1f2a"':''}>
       <td>${s.name}${s.algo==='random'?' <span style="color:var(--dim)">(基线)</span>':''}</td>
       <td>${s.n}</td><td><b>${s.mean_hits}</b></td>
+      <td style="color:var(--dim)">${s.expected_hits}</td>
       <td>${s.cost}</td><td>${s.payout}</td>
       <td class="${s.net>=0?'pos':'neg'}">${s.net}</td>
       <td class="${s.roi>=0?'pos':'neg'}">${(s.roi*100).toFixed(1)}%</td>
-      <td>${s.vs_random_p===null?'—':s.vs_random_p}</td>
-      <td>${s.algo==='random'?'—':(s.beats_random
+      <td>${s.p_value===null?'—':s.p_value}</td>
+      <td>${s.p_adjusted===null?'—':s.p_adjusted}</td>
+      <td>${s.beats_random
         ?'<span class="pos">显著优于随机</span>'
-        :'<span style="color:var(--dim)">未显著优于随机</span>')}</td>
+        :'<span style="color:var(--dim)">未显著优于随机</span>'}</td>
     </tr>`).join('')}
   </table></div>
   <div class="hint">平均命中 = 每注平均命中的号码个数（前区+后区）。
-  Welch t 检验对比各算法与随机基线的命中数均值，p&lt;0.05 才算显著。
-  ${base?`随机基线平均命中 ${base.mean_hits}。`:''}
+  <b>随机期望</b>由超几何分布精确算出，不是估计值——随便选号，长期平均就该命中这么多。
+  <b>p 值</b>是单侧精确检验：如果该算法毫无技巧，纯靠运气达到这个成绩的概率。
+  <b>校正后 p</b> 经 Holm–Bonferroni 校正：同时检验 ${d.summary.length} 个算法时，
+  只看未校正的 p&lt;0.05 会让"至少一个纯靠运气蒙到显著"的概率远超 5%（实测约 12%），
+  校正后才是真正的 5%。只有校正后 p&lt;0.05 才判定显著。
+  随机基线也一并参与检验——它是对照组，不是豁免对象。
   <b>样本量小的时候不要过度解读——短期波动很大，需要足够期数才能分辨真实差异。</b></div>`;
 
   $('#track-recent').innerHTML=`<div style="overflow-x:auto"><table>

@@ -12,6 +12,7 @@
 import hashlib
 import json
 from datetime import datetime, timezone
+from math import comb
 from pathlib import Path
 
 import numpy as np
@@ -182,8 +183,64 @@ def evaluate(records, df, lot=None):
     return out
 
 
+def _null_pmf(lot):
+    """单注预测的命中数分布，在"算法毫无技巧"假设下精确成立。
+
+    随便选 n 个号，开奖开出 n 个号，命中数服从超几何分布——这是组合学
+    事实，不需要估计。前区后区独立，卷积得到总命中数的分布。
+
+    用精确分布而不是拿一个随机基线做 t 检验：基线自己只有几期样本，
+    噪声比信号大得多，等于拿一把抖动的尺子去量另一把。
+    """
+    def hyper(n_max, n_pick):
+        tot = comb(n_max, n_pick)
+        return np.array([comb(n_pick, k) * comb(n_max - n_pick, n_pick - k) / tot
+                         for k in range(n_pick + 1)])
+
+    pmf = hyper(lot.front_max, lot.front_pick)
+    if lot.back_pick:
+        pmf = np.convolve(pmf, hyper(lot.back_max, lot.back_pick))
+    return pmf
+
+
+def _conv_power(pmf, n):
+    """n 注独立预测的总命中数分布。二分幂，O(log n) 次卷积。"""
+    out, base = np.array([1.0]), pmf
+    while n:
+        if n & 1:
+            out = np.convolve(out, base)
+        n >>= 1
+        if n:
+            base = np.convolve(base, base)
+    return out
+
+
+def _exact_p(lot, hits):
+    """单侧精确检验：这么好的成绩，纯靠运气能有多大概率达到？"""
+    total = _conv_power(_null_pmf(lot), len(hits))
+    obs = int(round(sum(hits)))
+    return float(total[min(obs, len(total) - 1):].sum())
+
+
+def _holm(pvals):
+    """Holm–Bonferroni 校正。
+
+    同时检验 m 个算法，每个都用 p<0.05，那么"至少一个纯靠运气蒙到显著"
+    的概率是 1-0.95^m——9 个算法就是 37%。这台机器存在的唯一理由是不
+    说谎，所以必须控制族错误率，而不是单次错误率。
+
+    Holm 是逐步下降版的 Bonferroni：一致地更强，且同样严格控制 FWER。
+    """
+    m = len(pvals)
+    adj, running = [1.0] * m, 0.0
+    for rank, i in enumerate(sorted(range(m), key=lambda i: pvals[i])):
+        running = max(running, min(1.0, (m - rank) * pvals[i]))
+        adj[i] = running
+    return adj
+
+
 def summarize(evaluated, lot=None):
-    """按算法汇总战绩，并与 random 基线做统计比较。"""
+    """按算法汇总战绩，并与"无技巧"的精确零分布做统计比较。"""
     lot = lot or get_lottery()
     by_algo = {}
     for e in evaluated:
@@ -199,22 +256,32 @@ def summarize(evaluated, lot=None):
             key = e.get("level_name") or str(e["level"])
             s["levels"][key] = s["levels"].get(key, 0) + 1
 
-    base = by_algo.get("random", {}).get("hits", [])
-    for s in by_algo.values():
+    pmf = _null_pmf(lot)
+    expected = float(np.dot(np.arange(len(pmf)), pmf))
+
+    # random 也一起检验。它是对照组，不是豁免对象——如果连它都被标成
+    # "显著优于随机"，那说明检验本身坏了。
+    tested = [s for s in by_algo.values() if s["n"] > 0]
+    raw = [_exact_p(lot, s["hits"]) for s in tested]
+    adj = _holm(raw) if raw else []
+
+    for s, p, pa in zip(tested, raw, adj):
         h = np.array(s["hits"], dtype=float)
-        s["mean_hits"] = round(float(h.mean()), 4) if len(h) else 0.0
+        s["mean_hits"] = round(float(h.mean()), 4)
+        s["expected_hits"] = round(expected, 4)
+        s["p_value"] = round(p, 4)
+        s["p_adjusted"] = round(pa, 4)
+        s["beats_random"] = bool(pa < 0.05 and h.mean() > expected)
+
+    for s in by_algo.values():
         s["roi"] = round((s["payout"] - s["cost"]) / s["cost"], 4) if s["cost"] else 0.0
         s["net"] = round(s["payout"] - s["cost"], 2)
         s.pop("hits")
-        s["vs_random_p"], s["beats_random"] = None, False
-
-        if base and s["algo"] != "random" and len(h) > 1 and len(base) > 1:
-            b = np.array(base, dtype=float)
-            if h.std() > 0 or b.std() > 0:
-                from scipy import stats as st
-                _t, p = st.ttest_ind(h, b, equal_var=False)
-                s["vs_random_p"] = round(float(p), 4)
-                s["beats_random"] = bool(p < 0.05 and h.mean() > b.mean())
+        s.setdefault("mean_hits", 0.0)
+        s.setdefault("expected_hits", round(expected, 4))
+        s.setdefault("p_value", None)
+        s.setdefault("p_adjusted", None)
+        s.setdefault("beats_random", False)
 
     return sorted(by_algo.values(), key=lambda x: -x["mean_hits"])
 
