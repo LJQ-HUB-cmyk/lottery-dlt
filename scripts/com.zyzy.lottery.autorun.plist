@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>LANG</key>
+		<string>zh_CN.UTF-8</string>
+		<key>PATH</key>
+		<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.zyzy.lottery.autorun</string>
+	<key>Nice</key>
+	<integer>5</integer>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/zyzy/lottery/scripts/autorun.sh</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/zyzy/lottery/logs/launchd.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/zyzy/lottery/logs/launchd.out.log</string>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict>
+			<key>Hour</key>
+			<integer>9</integer>
+			<key>Minute</key>
+			<integer>0</integer>
+		</dict>
+		<dict>
+			<key>Hour</key>
+			<integer>15</integer>
+			<key>Minute</key>
+			<integer>0</integer>
+		</dict>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/Users/zyzy/lottery</string>
+</dict>
+</plist>

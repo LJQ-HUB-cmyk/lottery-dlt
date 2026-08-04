@@ -13,8 +13,5 @@ data/archive/
 # 本机运行日志
 logs/
 
-# autorun 的当日上链标记，纯本地状态
-data/.last_anchor
-
 # ots upgrade 升级凭证时自己留的备份
 *.ots.bak
