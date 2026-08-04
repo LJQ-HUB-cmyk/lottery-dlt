@@ -110,6 +110,7 @@ canvas{max-height:280px}
 
   <!-- 走势 -->
   <div class="panel" id="trend">
+    <div id="trend-err"></div>
     <div class="card">
       <div class="row">
         <label>统计范围</label>
@@ -190,7 +191,17 @@ canvas{max-height:280px}
 <script>
 const $=s=>document.querySelector(s), charts={};
 const LOT=()=>$('#lot').value;
-const api=(path)=>fetch(path+(path.includes('?')?'&':'?')+'lottery='+LOT()).then(r=>r.json());
+// 请求失败必须让人看见。原来直接 .then(r=>r.json())，服务一挂就抛进
+// 未捕获的 promise rejection，页面只留一片空白，用户完全不知道发生了什么。
+const api=(path)=>fetch(path+(path.includes('?')?'&':'?')+'lottery='+LOT())
+  .then(r=>{ if(!r.ok) throw new Error('服务返回 HTTP '+r.status); return r.json(); },
+        ()=>{ throw new Error('连不上服务——请确认后端正在运行'); });
+
+function showErr(sel,e){
+  const el=$(sel); if(!el) return;
+  el.innerHTML=`<div class="warn">加载失败：${e.message}
+    <span style="opacity:.7">（${new Date().toLocaleTimeString()}）</span></div>`;
+}
 function switchLottery(){ location.search='?lottery='+LOT(); }
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
@@ -202,7 +213,9 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
 });
 
 async function loadTrack(){
-  const d=await api('/api/track');
+  let d;
+  try{ d=await api('/api/track'); }
+  catch(e){ return showErr('#track-chain',e); }
 
   const a=d.anchor||{};
   const anchorHtml = a.total ? `<div class="hint" style="margin-top:10px">
@@ -283,12 +296,14 @@ const balls=(f,b)=>f.map(n=>`<span class="ball">${String(n).padStart(2,'0')}</sp
 
 async function doPredict(){
   $('#pred-out').innerHTML='<div class="load">计算中…</div>';
-  const r=await api(`/api/predict?algo=${$('#algo').value}&sets=${$('#nsets').value}`);
-  $('#pred-out').innerHTML=r.sets.map((s,i)=>
-    `<div class="set"><span class="n">${i+1}</span>${balls(s.front,s.back)}</div>`).join('')
-    +`<div class="hint">算法：${r.name}　第 1 注为评分最高组合，其余按评分加权随机生成</div>`;
-  draw('c-score','bar',r.front_scores.map((_,i)=>i+1),r.front_scores,'#e8453c');
-  loadExplain();
+  try{
+    const r=await api(`/api/predict?algo=${$('#algo').value}&sets=${$('#nsets').value}`);
+    $('#pred-out').innerHTML=r.sets.map((s,i)=>
+      `<div class="set"><span class="n">${i+1}</span>${balls(s.front,s.back)}</div>`).join('')
+      +`<div class="hint">算法：${r.name}　第 1 注为评分最高组合，其余按评分加权随机生成</div>`;
+    draw('c-score','bar',r.front_scores.map((_,i)=>i+1),r.front_scores,'#e8453c');
+    loadExplain();
+  }catch(e){ showErr('#pred-out',e); }
 }
 
 let explainData=null;
@@ -297,8 +312,10 @@ const ALGO_LABEL={hot:'热号',cold:'冷号',overdue:'遗漏值',cycle:'回归�
 
 async function loadExplain(){
   $('#explain-out').innerHTML='<div class="load">计算中…</div>';
-  explainData=await api(`/api/explain?algo=${$('#algo').value}&zone=${$('#ez').value}`);
-  renderExplain();
+  try{
+    explainData=await api(`/api/explain?algo=${$('#algo').value}&zone=${$('#ez').value}`);
+    renderExplain();
+  }catch(e){ showErr('#explain-out',e); }
 }
 
 function renderExplain(){
@@ -334,30 +351,37 @@ function renderExplain(){
 
 async function loadTrend(){
   const w=$('#win').value, q=w==='0'?'':'&window='+w;
-  const f=await api('/api/stats/frequency?zone=front'+q);
-  draw('c-freq','bar',f.map(x=>x.number),f.map(x=>x.count),'#e8453c');
-  const m=await api('/api/stats/missing?zone=front');
-  draw('c-miss','bar',m.map(x=>x.number),m.map(x=>x.gap),'#f0b429');
-  const s=await api('/api/stats/sum?window='+(w==='0'?300:w));
-  draw('c-sum','line',s.map(x=>x.issue),s.map(x=>x.sum),'#3b82f6');
-  const r=await api('/api/stats/ratio'+(w==='0'?'':'?window='+w));
-  draw('c-odd','bar',r.odd.map(x=>x.label),r.odd.map(x=>x.count),'#22c55e');
-  const z=await api('/api/stats/zone'+(w==='0'?'':'?window='+w));
-  draw('c-zone','bar',z.map(x=>x.label),z.map(x=>x.count),'#8b5cf6');
+  try{
+    $('#trend-err').innerHTML='';
+    const f=await api('/api/stats/frequency?zone=front'+q);
+    draw('c-freq','bar',f.map(x=>x.number),f.map(x=>x.count),'#e8453c');
+    const m=await api('/api/stats/missing?zone=front');
+    draw('c-miss','bar',m.map(x=>x.number),m.map(x=>x.gap),'#f0b429');
+    const s=await api('/api/stats/sum?window='+(w==='0'?300:w));
+    draw('c-sum','line',s.map(x=>x.issue),s.map(x=>x.sum),'#3b82f6');
+    const r=await api('/api/stats/ratio'+(w==='0'?'':'?window='+w));
+    draw('c-odd','bar',r.odd.map(x=>x.label),r.odd.map(x=>x.count),'#22c55e');
+    const z=await api('/api/stats/zone'+(w==='0'?'':'?window='+w));
+    draw('c-zone','bar',z.map(x=>x.label),z.map(x=>x.count),'#8b5cf6');
+  }catch(e){ showErr('#trend-err',e); }
 }
 
 async function loadHistory(){
-  const d=await api('/api/stats/recent?window='+$('#hn').value);
-  $('#hist-out').innerHTML='<table><tr><th>期号</th><th>日期</th><th>开奖号码</th><th>和值</th></tr>'
-    +d.map(x=>`<tr><td>${x.issue}</td><td>${x.date}</td><td>`
-    +x.front.map(n=>`<span class="ball sm">${String(n).padStart(2,'0')}</span>`).join('')
-    +x.back.map(n=>`<span class="ball b sm">${String(n).padStart(2,'0')}</span>`).join('')
-    +`</td><td>${x.sum}</td></tr>`).join('')+'</table>';
+  try{
+    const d=await api('/api/stats/recent?window='+$('#hn').value);
+    $('#hist-out').innerHTML='<table><tr><th>期号</th><th>日期</th><th>开奖号码</th><th>和值</th></tr>'
+      +d.map(x=>`<tr><td>${x.issue}</td><td>${x.date}</td><td>`
+      +x.front.map(n=>`<span class="ball sm">${String(n).padStart(2,'0')}</span>`).join('')
+      +x.back.map(n=>`<span class="ball b sm">${String(n).padStart(2,'0')}</span>`).join('')
+      +`</td><td>${x.sum}</td></tr>`).join('')+'</table>';
+  }catch(e){ showErr('#hist-out',e); }
 }
 
 async function doWheel(){
   $('#wheel-out').innerHTML='<div class="load">求解中，号码池越大越慢…</div>';
-  const r=await api(`/api/wheel?pool=${$('#w-pool').value}&guarantee=${$('#w-g').value}&back=${$('#w-back').value}`);
+  let r;
+  try{ r=await api(`/api/wheel?pool=${$('#w-pool').value}&guarantee=${$('#w-g').value}&back=${$('#w-back').value}`); }
+  catch(e){ return showErr('#wheel-out',e); }
   if(r.error){$('#wheel-out').innerHTML=`<div class="warn">${r.error}</div>`;return;}
   $('#wheel-out').innerHTML=`
     <div class="kv">
