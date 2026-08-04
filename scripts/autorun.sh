@@ -56,9 +56,30 @@ if [ "$(cat "$STAMP" 2>/dev/null)" != "$TODAY" ]; then
 fi
 
 # 4. 校验哈希链，断裂时单独告警
+VERIFY_OK=1
 if ! "$PY" -m src.cron verify >> "$LOG" 2>&1; then
+    VERIFY_OK=0
     log "⚠️ 哈希链校验失败！"
     osascript -e 'display notification "哈希链校验失败，数据可能被修改" with title "彩票验证系统"' 2>/dev/null
+fi
+
+# 5. 推送到公开仓库，让预测和验证结果对外可查。
+#    本机是唯一写入方（GitHub Actions 的定时任务已停），所以直接推，
+#    不需要 rebase。没配远端就跳过，等配好了自动生效。
+if [ "$VERIFY_OK" = 0 ]; then
+    log "链校验未通过，本次不推送"
+elif git remote get-url origin >/dev/null 2>&1; then
+    git add data/
+    if git diff --staged --quiet; then
+        log "无数据变更，不提交"
+    else
+        if git commit -q -m "数据更新 $(date '+%F %H:%M')" >> "$LOG" 2>&1 \
+           && git push -q origin HEAD >> "$LOG" 2>&1; then
+            log "已推送到远端"
+        else
+            log "推送失败，数据已在本地提交，下次自动重试"
+        fi
+    fi
 fi
 
 log "===== 结束 ====="
