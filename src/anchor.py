@@ -38,10 +38,24 @@ def chain_head(lot, records=None):
 
 
 def digest_file(lot, records=None):
-    """生成待锚定的摘要文件：链头 + 记录数 + 全链内容哈希。"""
+    """生成待锚定的摘要文件：链头 + 记录数 + 全链内容哈希。
+
+    已存在就原样复用，绝不重写。
+
+    文件名只由记录数和链头决定，但内容里有 created_at。同一个链头第二次
+    调用时若重新写入，created_at 变了 → 文件字节变了 → 之前为它盖的
+    .ots 凭证当场失配，比特币时间戳作废，而且没有任何报错。整套系统的
+    可信度就建立在这些凭证上，这里必须只写一次。
+    """
     records = track.load_records(lot) if records is None else records
     if not records:
         return None, None
+
+    d = anchor_dir(lot)
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"chain-{len(records):06d}-{records[-1]['hash'][:12]}.json"
+    if path.exists():
+        return path, json.loads(path.read_text(encoding="utf-8"))
 
     full = hashlib.sha256(
         "\n".join(r["hash"] for r in records).encode()
@@ -55,9 +69,6 @@ def digest_file(lot, records=None):
         "last_issue": records[-1]["issue"],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    d = anchor_dir(lot)
-    d.mkdir(parents=True, exist_ok=True)
-    path = d / f"chain-{len(records):06d}-{records[-1]['hash'][:12]}.json"
     path.write_text(json.dumps(doc, indent=2, sort_keys=True), encoding="utf-8")
     return path, doc
 
