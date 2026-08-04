@@ -136,8 +136,18 @@ def cmd_verify():
     return rc
 
 
+def cmd_null():
+    """空对照：同一个模型分别喂真实开奖和确定随机数据，比较它学到了什么。"""
+    from . import null as null_mod
+
+    print(f"[{datetime.now():%F %T}] 空对照实验")
+    print("  用 numpy 生成等概率无放回的合成开奖，与真实开奖跑同一个堆叠模型。")
+    print("  若模型在两者上学出的结构一致，说明它在真实开奖里也什么都没学到。")
+    return _each(lambda lot: null_mod.report(lot))
+
+
 COMMANDS = {"settle": cmd_settle, "lock": cmd_lock,
-            "anchor": cmd_anchor, "verify": cmd_verify}
+            "anchor": cmd_anchor, "verify": cmd_verify, "null": cmd_null}
 
 
 if __name__ == "__main__":
